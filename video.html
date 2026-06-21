@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Course Video</title>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
+            color: #e0e0e0; min-height: 100vh;
+            display: flex; align-items: center; justify-content: center; padding: 20px;
+        }
+        .card {
+            background: rgba(20, 25, 50, 0.85);
+            border: 1px solid rgba(77, 166, 255, 0.25);
+            border-radius: 14px; padding: 30px; width: 100%; max-width: 880px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+        }
+        h1 { color: #4da6ff; font-size: 1.6em; margin-bottom: 6px; }
+        .sub { color: #9aa4c0; margin-bottom: 22px; font-size: 0.95em; }
+        label { display: block; margin: 14px 0 6px; color: #b8c0d8; font-size: 0.9em; }
+        input {
+            width: 100%; padding: 12px; border-radius: 8px;
+            border: 1px solid rgba(120,140,200,0.35); background: rgba(10,14,35,0.7);
+            color: #fff; font-size: 1em;
+        }
+        button {
+            margin-top: 20px; width: 100%; padding: 14px; border: none; border-radius: 8px;
+            background: #4da6ff; color: #06122a; font-weight: 700; font-size: 1.05em; cursor: pointer;
+        }
+        button:hover { background: #6fb8ff; }
+        button:disabled { opacity: 0.6; cursor: default; }
+        .error { color: #ff7a7a; margin-top: 14px; min-height: 1.2em; }
+        .hidden { display: none; }
+        .videowrap { position: relative; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 10px; overflow: hidden; }
+        .videowrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+        .status { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; font-size: 0.95em; }
+        .bar { flex: 1 1 220px; height: 12px; background: rgba(10,14,35,0.8); border-radius: 6px; overflow: hidden; min-width: 180px; }
+        .bar > div { height: 100%; width: 0%; background: linear-gradient(90deg,#4da6ff,#7ee0c0); transition: width 0.4s; }
+        .pct { font-weight: 700; color: #7ee0c0; }
+        .done { color: #7ee0c0; font-weight: 700; }
+        .who { color: #9aa4c0; font-size: 0.85em; margin-top: 6px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <!-- LOGIN -->
+        <div id="loginView">
+            <h1 id="loginTitle">Course Video</h1>
+            <p class="sub">Sign in to watch. Your viewing is recorded for your instructor.</p>
+            <label for="name">Your name</label>
+            <input type="text" id="name" placeholder="Enter your name" autocomplete="off">
+            <label for="studentID">Student ID</label>
+            <input type="text" id="studentID" placeholder="Enter your student ID" autocomplete="off">
+            <label for="password">Video password</label>
+            <input type="password" id="password" placeholder="Enter password" autocomplete="off">
+            <button id="loginBtn" onclick="startSession()">Watch Video</button>
+            <div class="error" id="loginError"></div>
+        </div>
+
+        <!-- PLAYER -->
+        <div id="playerView" class="hidden">
+            <h1 id="videoTitle">Video</h1>
+            <p class="who" id="whoLine"></p>
+            <div class="videowrap"><div id="ytplayer"></div></div>
+            <div class="status">
+                <span>Watched:</span>
+                <div class="bar"><div id="progressFill"></div></div>
+                <span class="pct" id="progressPct">0%</span>
+                <span class="done hidden" id="doneTag">✓ Complete</span>
+            </div>
+            <p class="who" id="saveLine">Progress saves automatically.</p>
+        </div>
+    </div>
+
+    <script>
+        // ---- Firebase (same project as the quizzes/dashboard) ----
+        const firebaseConfig = {
+            apiKey: "AIzaSyApEcj1Gt_AgK9853JGWsyPuWuX1RyRQQA",
+            authDomain: "astronomy-course.firebaseapp.com",
+            projectId: "astronomy-course",
+            storageBucket: "astronomy-course.firebasestorage.app",
+            messagingSenderId: "84123424550",
+            appId: "1:84123424550:web:f6eab6a447d480cedc13e7"
+        };
+        let db = null;
+        if (typeof firebase !== 'undefined') {
+            try {
+                if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+                db = firebase.firestore();
+            } catch (e) { console.error('Firebase init failed:', e); }
+        } else {
+            console.warn('Firebase SDK not loaded (normal in a sandboxed preview; works on GitHub Pages).');
+        }
+
+        // ---- The video's quiz id comes from the link: video.html?qid=VIDEO01 ----
+        const QID = new URLSearchParams(location.search).get('qid') || '';
+
+        // ---- Session / tracking state ----
+        const CELL_SECONDS = 2;            // one coverage cell per 2 seconds
+        const POLL_MS = 700;               // how often we sample the player
+        const SAVE_EVERY_MS = 8000;        // throttle Firestore writes
+        const COMPLETE_THRESHOLD = 0.92;   // 92% of cells = complete
+
+        let session = null;   // { className, quizName, databaseId, youtubeId, name, studentID, docId }
+        let player = null;
+        let ytApiReady = false;
+        let pendingVideoId = null;
+
+        let duration = 0, numCells = 0;
+        let covered = null;            // Uint8Array of 0/1 per cell
+        let watchTime = 0;             // real seconds watched
+        let lastTime = -1;             // previous sampled currentTime
+        let dirty = false;
+        let lastSave = 0;
+        let firstSeen = null;
+
+        // ============== LOGIN ==============
+        async function startSession() {
+            const errEl = document.getElementById('loginError');
+            errEl.textContent = '';
+            const name = document.getElementById('name').value.trim();
+            const studentID = document.getElementById('studentID').value.trim();
+            const password = document.getElementById('password').value.trim();
+            const btn = document.getElementById('loginBtn');
+
+            if (!QID) { errEl.textContent = 'This link is missing its video id (?qid=...). Ask your instructor for the correct link.'; return; }
+            if (!name || !studentID || !password) { errEl.textContent = 'Please fill in all fields.'; return; }
+            if (!db) { errEl.textContent = 'Cannot reach the database. Try again, or use the link your instructor provided.'; return; }
+
+            btn.disabled = true; btn.textContent = 'Checking…';
+            try {
+                // Resolve videoId + password -> the exact video (separate from quizzes)
+                const snap = await db.collection('videos')
+                    .where('videoId', '==', QID)
+                    .where('password', '==', password)
+                    .limit(1).get();
+
+                if (snap.empty) { errEl.textContent = 'Incorrect password for this video.'; btn.disabled = false; btn.textContent = 'Watch Video'; return; }
+
+                const q = snap.docs[0].data();
+                const youtubeId = q.youtubeId || q.youtubeID || '';
+                if (!youtubeId) { errEl.textContent = 'No video has been attached to this entry yet. Ask your instructor.'; btn.disabled = false; btn.textContent = 'Watch Video'; return; }
+
+                // Load this video's settings (ID format + availability window)
+                let settings = {};
+                try {
+                    const sDoc = await db.collection('videoSettings').doc(`${q.className}_${q.name}`).get();
+                    if (sDoc.exists) settings = sDoc.data();
+                } catch (e) { /* settings are optional */ }
+
+                // Enforce Student ID rule, if any
+                const idv = settings.idValidation;
+                if (idv && idv.type && idv.type !== 'none' && idv.value) {
+                    let valid = true, msg = 'Student ID is not in the required format';
+                    if (idv.type === 'digits') {
+                        const n = parseInt(idv.value, 10);
+                        valid = new RegExp('^\\d{' + n + '}$').test(studentID);
+                        msg = `Student ID must be exactly ${n} digits`;
+                    } else if (idv.type === 'startsWith') {
+                        valid = studentID.startsWith(idv.value); msg = `Student ID must start with "${idv.value}"`;
+                    } else if (idv.type === 'regex') {
+                        try { valid = new RegExp(idv.value).test(studentID); } catch (e) { valid = true; }
+                    }
+                    if (!valid) { errEl.textContent = msg; btn.disabled = false; btn.textContent = 'Watch Video'; return; }
+                }
+
+                // Enforce availability window, if set
+                const a = settings.availability || {};
+                const now = new Date();
+                if (a.start && now < new Date(a.start)) {
+                    errEl.textContent = `This video opens ${new Date(a.start).toLocaleString()}.`;
+                    btn.disabled = false; btn.textContent = 'Watch Video'; return;
+                }
+                if (a.stop && now > new Date(a.stop)) {
+                    errEl.textContent = `This video closed ${new Date(a.stop).toLocaleString()}.`;
+                    btn.disabled = false; btn.textContent = 'Watch Video'; return;
+                }
+
+                const safeId = studentID.replace(/[^A-Za-z0-9_-]/g, '_');
+                session = {
+                    className: q.className,
+                    quizName: q.name,
+                    databaseId: `${q.className}_${q.name}`,
+                    youtubeId,
+                    name, studentID,
+                    docId: `${q.className}_${q.name}__${safeId}`
+                };
+
+                document.getElementById('videoTitle').textContent = q.name;
+                document.getElementById('whoLine').textContent = `${name} · ${q.className}`;
+                document.getElementById('loginView').classList.add('hidden');
+                document.getElementById('playerView').classList.remove('hidden');
+
+                await loadExistingProgress();
+                startVideo(youtubeId);
+            } catch (error) {
+                console.error('Login error:', error);
+                errEl.textContent = 'Something went wrong: ' + error.message;
+                btn.disabled = false; btn.textContent = 'Watch Video';
+            }
+        }
+
+        // ============== Load prior coverage so re-watching accumulates ==============
+        async function loadExistingProgress() {
+            try {
+                const doc = await db.collection('videoProgress').doc(session.docId).get();
+                if (doc.exists) {
+                    const d = doc.data();
+                    if (d.coverage && typeof d.coverage === 'string') {
+                        // store the prior bitstring to merge once we know duration
+                        session.priorCoverage = d.coverage;
+                    }
+                    if (typeof d.watchTime === 'number') watchTime = d.watchTime;
+                    if (d.firstSeen) firstSeen = d.firstSeen;
+                }
+            } catch (e) { console.warn('No prior progress (or read failed):', e); }
+        }
+
+        // ============== YouTube IFrame API ==============
+        (function loadYT() {
+            const tag = document.createElement('script');
+            tag.src = 'https://www.youtube.com/iframe_api';
+            document.head.appendChild(tag);
+        })();
+        window.onYouTubeIframeAPIReady = function () {
+            ytApiReady = true;
+            if (pendingVideoId) { createPlayer(pendingVideoId); pendingVideoId = null; }
+        };
+        function startVideo(videoId) {
+            if (ytApiReady) createPlayer(videoId); else pendingVideoId = videoId;
+        }
+        function createPlayer(videoId) {
+            player = new YT.Player('ytplayer', {
+                videoId: videoId,
+                playerVars: { rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1 },
+                events: { onReady: onPlayerReady, onStateChange: onPlayerStateChange }
+            });
+        }
+
+        function onPlayerReady() {
+            duration = Math.floor(player.getDuration());
+            if (!duration || duration < 1) { setTimeout(onPlayerReady, 600); return; } // metadata not ready yet
+            numCells = Math.max(1, Math.ceil(duration / CELL_SECONDS));
+            covered = new Uint8Array(numCells);
+            // merge prior coverage if its length matches this video's grid
+            if (session.priorCoverage && session.priorCoverage.length === numCells) {
+                for (let i = 0; i < numCells; i++) if (session.priorCoverage[i] === '1') covered[i] = 1;
+            }
+            if (!firstSeen) firstSeen = Date.now();
+            updateProgressUI();
+            setInterval(sample, POLL_MS);
+        }
+
+        function onPlayerStateChange(e) {
+            // 0 = ended, 2 = paused
+            if (e.data === YT.PlayerState.ENDED || e.data === YT.PlayerState.PAUSED) {
+                saveProgress(true);
+            }
+        }
+
+        // ============== Coverage sampling (distinguishes watching from skipping) ==============
+        function sample() {
+            if (!player || !player.getPlayerState) return;
+            if (player.getPlayerState() !== YT.PlayerState.PLAYING) return;
+
+            const now = player.getCurrentTime();
+            const rate = player.getPlaybackRate ? player.getPlaybackRate() : 1;
+            const cell = Math.min(numCells - 1, Math.floor(now / CELL_SECONDS));
+
+            if (lastTime >= 0) {
+                const advanced = now - lastTime;
+                const expected = (POLL_MS / 1000) * rate;
+                if (advanced > 0 && advanced <= expected + CELL_SECONDS * 1.5) {
+                    // continuous playback: fill cells between last and now
+                    const fromCell = Math.max(0, Math.floor(lastTime / CELL_SECONDS));
+                    for (let c = fromCell; c <= cell; c++) covered[c] = 1;
+                    watchTime += advanced;
+                    dirty = true;
+                } else {
+                    // a seek/jump: only credit the landing cell
+                    covered[cell] = 1; dirty = true;
+                }
+            } else {
+                covered[cell] = 1; dirty = true;
+            }
+            lastTime = now;
+
+            updateProgressUI();
+            if (dirty && Date.now() - lastSave > SAVE_EVERY_MS) saveProgress(false);
+        }
+
+        function coveredCount() {
+            let n = 0; for (let i = 0; i < numCells; i++) if (covered[i]) n++; return n;
+        }
+        function updateProgressUI() {
+            if (!numCells) return;
+            const pct = Math.round((coveredCount() / numCells) * 100);
+            document.getElementById('progressFill').style.width = pct + '%';
+            document.getElementById('progressPct').textContent = pct + '%';
+            document.getElementById('doneTag').classList.toggle('hidden', pct / 100 < COMPLETE_THRESHOLD);
+        }
+
+        // ============== Write to Firestore ==============
+        async function saveProgress(force) {
+            if (!db || !session || !covered) return;
+            if (!force && !dirty) return;
+            dirty = false; lastSave = Date.now();
+            try {
+                let bits = '';
+                for (let i = 0; i < numCells; i++) bits += covered[i] ? '1' : '0';
+                const count = coveredCount();
+                const percent = Math.round((count / numCells) * 100);
+                await db.collection('videoProgress').doc(session.docId).set({
+                    className: session.className,
+                    quizName: session.quizName,
+                    databaseId: session.databaseId,
+                    youtubeId: session.youtubeId,
+                    studentName: session.name,
+                    studentID: session.studentID,
+                    duration: duration,
+                    cellSeconds: CELL_SECONDS,
+                    numCells: numCells,
+                    coverage: bits,
+                    cellsCovered: count,
+                    percentWatched: percent,
+                    watchTime: Math.round(watchTime),
+                    completed: (percent / 100) >= COMPLETE_THRESHOLD,
+                    firstSeen: firstSeen || Date.now(),
+                    lastUpdated: Date.now()
+                }, { merge: true });
+            } catch (e) { console.error('Save failed:', e); dirty = true; }
+        }
+
+        // Best-effort save when leaving / backgrounding
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveProgress(true); });
+        window.addEventListener('pagehide', () => saveProgress(true));
+        window.addEventListener('beforeunload', () => saveProgress(true));
+    </script>
+</body>
+</html>
