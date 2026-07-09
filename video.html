@@ -106,7 +106,12 @@
         const SAVE_EVERY_MS = 8000;        // throttle Firestore writes
         const COMPLETE_THRESHOLD = 0.92;   // 92% of cells = complete
 
-        let session = null;   // { className, quizName, databaseId, youtubeId, name, studentID, docId }
+        // If a student closes the tab mid-attempt, they can pick that SAME attempt back up
+        // within this window instead of burning a new one. Set to 0 to make every login a
+        // brand-new attempt (harsh: an accidental refresh costs the student an attempt).
+        const RESUME_WINDOW_MS = 6 * 60 * 60 * 1000;   // 6 hours
+
+        let session = null;   // { className, quizName, databaseId, youtubeId, name, studentID, docId, attempt, maxAttempts, resume }
         let player = null;
         let ytApiReady = false;
         let pendingVideoId = null;
@@ -182,21 +187,60 @@
                 }
 
                 const safeId = studentID.replace(/[^A-Za-z0-9_-]/g, '_');
+                const databaseId = `${q.className}_${q.name}`;
+                const maxAttempts = parseInt(settings.maxAttempts, 10) || 1;
+
+                // ---- Which attempt is this? ----
+                // Read every attempt this student has already made on this video.
+                let prior = [];
+                try {
+                    const ps = await db.collection('videoProgress')
+                        .where('databaseId', '==', databaseId)
+                        .where('studentID', '==', studentID)
+                        .get();
+                    prior = ps.docs.map(d => ({ id: d.id, ...d.data() }));
+                } catch (e) { console.warn('Attempt lookup failed:', e); }
+
+                // Docs written before attempt tracking existed have no `attempt` field -> treat as 1.
+                prior.sort((a, b) => (a.attempt || 1) - (b.attempt || 1));
+                const latest = prior.length ? prior[prior.length - 1] : null;
+
+                const resumable = !!latest && !latest.completed && RESUME_WINDOW_MS > 0 &&
+                                  (Date.now() - (latest.lastUpdated || 0)) < RESUME_WINDOW_MS;
+
+                let attempt, docId;
+                if (resumable) {
+                    attempt = latest.attempt || 1;
+                    docId = latest.id;                       // keep writing to the unfinished attempt
+                } else {
+                    attempt = (latest ? (latest.attempt || 1) : 0) + 1;
+                    if (attempt > maxAttempts) {
+                        errEl.textContent = `You have used all ${maxAttempts} attempt${maxAttempts > 1 ? 's' : ''} for this video.`;
+                        btn.disabled = false; btn.textContent = 'Watch Video'; return;
+                    }
+                    docId = `${databaseId}__${safeId}__a${attempt}`;   // a NEW document, never an overwrite
+                }
+
                 session = {
                     className: q.className,
                     quizName: q.name,
-                    databaseId: `${q.className}_${q.name}`,
+                    databaseId,
                     youtubeId,
                     name, studentID,
-                    docId: `${q.className}_${q.name}__${safeId}`
+                    docId, attempt, maxAttempts,
+                    resume: resumable
                 };
 
+                // A fresh attempt starts from nothing. Only a resumed attempt inherits state.
+                covered = null; watchTime = 0; lastTime = -1; firstSeen = null; dirty = false; lastSave = 0;
+
                 document.getElementById('videoTitle').textContent = q.name;
-                document.getElementById('whoLine').textContent = `${name} · ${q.className}`;
+                document.getElementById('whoLine').textContent =
+                    `${name} · ${q.className} · Attempt ${attempt} of ${maxAttempts}` + (resumable ? ' (resumed)' : '');
                 document.getElementById('loginView').classList.add('hidden');
                 document.getElementById('playerView').classList.remove('hidden');
 
-                await loadExistingProgress();
+                if (resumable) await loadExistingProgress();
                 startVideo(youtubeId);
             } catch (error) {
                 console.error('Login error:', error);
@@ -205,8 +249,9 @@
             }
         }
 
-        // ============== Load prior coverage so re-watching accumulates ==============
+        // ============== Resume an UNFINISHED attempt (never a completed one) ==============
         async function loadExistingProgress() {
+            if (!session || !session.resume) return;
             try {
                 const doc = await db.collection('videoProgress').doc(session.docId).get();
                 if (doc.exists) {
@@ -247,8 +292,8 @@
             if (!duration || duration < 1) { setTimeout(onPlayerReady, 600); return; } // metadata not ready yet
             numCells = Math.max(1, Math.ceil(duration / CELL_SECONDS));
             covered = new Uint8Array(numCells);
-            // merge prior coverage if its length matches this video's grid
-            if (session.priorCoverage && session.priorCoverage.length === numCells) {
+            // merge prior coverage only when resuming an unfinished attempt
+            if (session.resume && session.priorCoverage && session.priorCoverage.length === numCells) {
                 for (let i = 0; i < numCells; i++) if (session.priorCoverage[i] === '1') covered[i] = 1;
             }
             if (!firstSeen) firstSeen = Date.now();
@@ -322,6 +367,8 @@
                     youtubeId: session.youtubeId,
                     studentName: session.name,
                     studentID: session.studentID,
+                    attempt: session.attempt,
+                    maxAttempts: session.maxAttempts,
                     duration: duration,
                     cellSeconds: CELL_SECONDS,
                     numCells: numCells,
