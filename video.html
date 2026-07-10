@@ -104,7 +104,7 @@
         const CELL_SECONDS = 2;            // one coverage cell per 2 seconds
         const POLL_MS = 700;               // how often we sample the player
         const SAVE_EVERY_MS = 8000;        // throttle Firestore writes
-        const COMPLETE_THRESHOLD = 0.92;   // 92% of cells = complete
+        const COMPLETE_THRESHOLD = 1.0;    // complete means 100% of the video watched
 
 
         let session = null;   // { className, quizName, databaseId, youtubeId, name, studentID, docId, attempt, maxAttempts, resume }
@@ -326,7 +326,7 @@
             const pct = Math.round((coveredCount() / numCells) * 100);
             document.getElementById('progressFill').style.width = pct + '%';
             document.getElementById('progressPct').textContent = pct + '%';
-            document.getElementById('doneTag').classList.toggle('hidden', pct / 100 < COMPLETE_THRESHOLD);
+            document.getElementById('doneTag').classList.toggle('hidden', pct < 100);
         }
 
         // ============== Write to Firestore ==============
@@ -355,7 +355,7 @@
                     cellsCovered: count,
                     percentWatched: percent,
                     watchTime: Math.round(watchTime),
-                    completed: (percent / 100) >= COMPLETE_THRESHOLD,
+                    completed: percent >= 100,
                     firstSeen: firstSeen || Date.now(),
                     lastUpdated: Date.now()
                 });
