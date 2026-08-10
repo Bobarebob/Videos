@@ -107,7 +107,7 @@
         const COMPLETE_THRESHOLD = 1.0;    // complete means 100% of the video watched
 
 
-        let session = null;   // { className, quizName, databaseId, youtubeId, name, studentID, docId, attempt, maxAttempts, isReview, reviewNum }
+        let session = null;   // { className, quizName, databaseId, youtubeId, name, studentID, docId, attempt, maxAttempts, resume }
         let player = null;
         let ytApiReady = false;
         let pendingVideoId = null;
@@ -202,22 +202,13 @@
                 }
 
                 // Docs written before attempt tracking existed have no `attempt` field -> treat as 1.
-                // Review sessions are NOT attempts and must never inflate the attempt number.
-                const priorAttempts = prior.filter(r => r.review !== true);
-                const priorReviews  = prior.filter(r => r.review === true);
-                const highest = priorAttempts.reduce((m, r) => Math.max(m, r.attempt || 1), 0);
-
-                // Attempts used up? Don't lock the student out — drop into an ungraded review session.
-                // The availability window (checked above) is the only thing that can still close the door.
-                const isReview = highest >= maxAttempts;
-                let attempt = 0, reviewNum = 0, docId;
-                if (isReview) {
-                    reviewNum = priorReviews.reduce((m, r) => Math.max(m, r.reviewNum || 0), 0) + 1;
-                    docId = `${databaseId}__${safeId}__r${reviewNum}`;
-                } else {
-                    attempt = highest + 1;
-                    docId = `${databaseId}__${safeId}__a${attempt}`;   // a NEW document, never an overwrite
+                const highest = prior.reduce((m, r) => Math.max(m, r.attempt || 1), 0);
+                const attempt = highest + 1;
+                if (attempt > maxAttempts) {
+                    errEl.textContent = `You have used all ${maxAttempts} attempt${maxAttempts > 1 ? 's' : ''} for this video.`;
+                    btn.disabled = false; btn.textContent = 'Watch Video'; return;
                 }
+                const docId = `${databaseId}__${safeId}__a${attempt}`;   // a NEW document, never an overwrite
 
                 session = {
                     className: q.className,
@@ -225,8 +216,7 @@
                     databaseId,
                     youtubeId,
                     name, studentID,
-                    docId, attempt, maxAttempts,
-                    isReview, reviewNum
+                    docId, attempt, maxAttempts
                 };
 
                 // Every attempt starts from nothing.
@@ -234,27 +224,21 @@
 
                 // Claim the attempt immediately so closing the tab can't win a free retry.
                 try {
-                    const claim = {
+                    await db.collection('videoProgress').doc(docId).set({
                         className: q.className, quizName: q.name, databaseId, youtubeId,
                         studentName: name, studentID,
-                        maxAttempts, review: isReview,
+                        attempt, maxAttempts,
                         coverage: '', cellsCovered: 0, percentWatched: 0, watchTime: 0,
                         completed: false, firstSeen, lastUpdated: firstSeen
-                    };
-                    if (isReview) claim.reviewNum = reviewNum; else claim.attempt = attempt;
-                    await db.collection('videoProgress').doc(docId).set(claim);
+                    });
                 } catch (e) {
-                    errEl.textContent = 'Could not start your ' + (isReview ? 'review session' : 'attempt') + ': ' + e.message;
+                    errEl.textContent = 'Could not start your attempt: ' + e.message;
                     btn.disabled = false; btn.textContent = 'Watch Video'; session = null; return;
                 }
 
                 document.getElementById('videoTitle').textContent = q.name;
-                document.getElementById('whoLine').textContent = isReview
-                    ? `${q.className} · ${name} · ID ${studentID} · Attempts used (${maxAttempts} of ${maxAttempts}) — reviewing`
-                    : `${q.className} · ${name} · ID ${studentID} · Attempt ${attempt} of ${maxAttempts}`;
-                document.getElementById('saveLine').textContent = isReview
-                    ? 'Review session — watch as much as you like. Your grade is already recorded and will not change.'
-                    : 'Progress saves automatically.';
+                document.getElementById('whoLine').textContent =
+                    `${name} · ${q.className} · Attempt ${attempt} of ${maxAttempts}`;
                 document.getElementById('loginView').classList.add('hidden');
                 document.getElementById('playerView').classList.remove('hidden');
 
@@ -355,15 +339,15 @@
                 for (let i = 0; i < numCells; i++) bits += covered[i] ? '1' : '0';
                 const count = coveredCount();
                 const percent = Math.round((count / numCells) * 100);
-                const payload = {
+                await db.collection('videoProgress').doc(session.docId).set({
                     className: session.className,
                     quizName: session.quizName,
                     databaseId: session.databaseId,
                     youtubeId: session.youtubeId,
                     studentName: session.name,
                     studentID: session.studentID,
+                    attempt: session.attempt,
                     maxAttempts: session.maxAttempts,
-                    review: session.isReview,
                     duration: duration,
                     cellSeconds: CELL_SECONDS,
                     numCells: numCells,
@@ -374,9 +358,7 @@
                     completed: percent >= 100,
                     firstSeen: firstSeen || Date.now(),
                     lastUpdated: Date.now()
-                };
-                if (session.isReview) payload.reviewNum = session.reviewNum; else payload.attempt = session.attempt;
-                await db.collection('videoProgress').doc(session.docId).set(payload);
+                });
             } catch (e) { console.error('Save failed:', e); dirty = true; }
         }
 
