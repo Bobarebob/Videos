@@ -170,17 +170,23 @@
                     if (!valid) { errEl.textContent = msg; btn.disabled = false; btn.textContent = 'Watch Video'; return; }
                 }
 
-                // Enforce availability window, if set
+                // Enforce availability window, if set.
+                //   start      — nothing before this
+                //   stop       — graded attempts end here
+                //   reviewStop — ungraded re-watching ends here (blank = same as stop)
                 const a = settings.availability || {};
                 const now = new Date();
+                const hardStop = a.reviewStop || a.stop;   // the real lock-out date
                 if (a.start && now < new Date(a.start)) {
                     errEl.textContent = `This video opens ${new Date(a.start).toLocaleString()}.`;
                     btn.disabled = false; btn.textContent = 'Watch Video'; return;
                 }
-                if (a.stop && now > new Date(a.stop)) {
-                    errEl.textContent = `This video closed ${new Date(a.stop).toLocaleString()}.`;
+                if (hardStop && now > new Date(hardStop)) {
+                    errEl.textContent = `This video closed ${new Date(hardStop).toLocaleString()}.`;
                     btn.disabled = false; btn.textContent = 'Watch Video'; return;
                 }
+                // Past the credit date but still inside the review window: watchable, never graded.
+                const creditClosed = !!(a.stop && now > new Date(a.stop));
 
                 const safeId = studentID.replace(/[^A-Za-z0-9_-]/g, '_');
                 const databaseId = `${q.className}_${q.name}`;
@@ -207,9 +213,12 @@
                 const priorReviews  = prior.filter(r => r.review === true);
                 const highest = priorAttempts.reduce((m, r) => Math.max(m, r.attempt || 1), 0);
 
-                // Attempts used up? Don't lock the student out — drop into an ungraded review session.
-                // The availability window (checked above) is the only thing that can still close the door.
-                const isReview = highest >= maxAttempts;
+                // Two ways into an ungraded review session:
+                //   1. attempts are used up
+                //   2. the credit window has closed (unused attempts are forfeit — the due date stands)
+                // Either way the student can still watch until reviewStop; nothing is graded.
+                const attemptsUsedUp = highest >= maxAttempts;
+                const isReview = attemptsUsedUp || creditClosed;
                 let attempt = 0, reviewNum = 0, docId;
                 if (isReview) {
                     reviewNum = priorReviews.reduce((m, r) => Math.max(m, r.reviewNum || 0), 0) + 1;
@@ -249,12 +258,21 @@
                 }
 
                 document.getElementById('videoTitle').textContent = q.name;
-                document.getElementById('whoLine').textContent = isReview
-                    ? `${q.className} · ${name} · ID ${studentID} · Attempts used (${maxAttempts} of ${maxAttempts}) — reviewing`
-                    : `${q.className} · ${name} · ID ${studentID} · Attempt ${attempt} of ${maxAttempts}`;
-                document.getElementById('saveLine').textContent = isReview
-                    ? 'Review session — watch as much as you like. Your grade is already recorded and will not change.'
-                    : 'Progress saves automatically.';
+                let whoTail, saveText;
+                if (!isReview) {
+                    whoTail = `Attempt ${attempt} of ${maxAttempts}`;
+                    saveText = 'Progress saves automatically.';
+                } else if (attemptsUsedUp) {
+                    whoTail = `Attempts used (${maxAttempts} of ${maxAttempts}) — reviewing`;
+                    saveText = 'Review session — watch as much as you like. Your grade is already recorded and will not change.';
+                } else {
+                    // Credit window closed with attempts still unused.
+                    whoTail = 'Assignment closed — reviewing';
+                    saveText = `Review session — the graded window closed ${new Date(a.stop).toLocaleString()}, so this viewing is not graded. Watch as much as you like.`;
+                }
+                document.getElementById('whoLine').textContent =
+                    `${q.className} · ${name} · ID ${studentID} · ${whoTail}`;
+                document.getElementById('saveLine').textContent = saveText;
                 document.getElementById('loginView').classList.add('hidden');
                 document.getElementById('playerView').classList.remove('hidden');
 
