@@ -48,6 +48,10 @@
         /* ---- password reveal ("eye") ---- */
         .pw-wrap { position: relative; }
         .pw-wrap input { padding-right: 48px; }
+        /* Edge/Chromium add their own reveal (and clear) control inside password fields.
+           Hide them so the student sees one eye, not two. */
+        .pw-wrap input::-ms-reveal,
+        .pw-wrap input::-ms-clear { display: none; width: 0; height: 0; }
         .eye {
             position: absolute; top: 0; right: 0; height: 100%; width: 44px;
             margin: 0; padding: 0; width: 44px;
