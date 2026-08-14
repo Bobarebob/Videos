@@ -42,8 +42,10 @@
            YouTube's title/channel link, the bottom covers "Watch on YouTube" and the
            logo. They always intercept clicks — --mask-opacity only controls how
            visible they are, so at 0 the corner still cannot be clicked through. */
-        .vmask { position: absolute; height: 12.5%;
-                 background: #141932; opacity: var(--mask-opacity, 0); z-index: 5; }
+        /* Always fully transparent — the point is intercepting the click, not hiding
+           anything. --mask-display is set from the per-video setting. */
+        .vmask { display: var(--mask-display, block); position: absolute; height: 12.5%;
+                 background: transparent; z-index: 5; }
         /* Top band: covers only the LEFT portion — the channel avatar, video title and
            uploader name, all of which link out to YouTube. The right end of that band
            holds volume, CC and settings, so it is deliberately left clear: captions
@@ -156,11 +158,6 @@
             </div>
             <div class="footrow">
                 <p class="who" id="saveLine">Progress saves automatically.</p>
-                <button type="button" class="fsbtn" id="ccBtn" onclick="toggleCaptions()"
-                        aria-pressed="true" title="Turn captions off">
-                    <span style="font-weight:700; letter-spacing:0.5px;">CC</span>
-                    <span class="ccLabel">On</span>
-                </button>
                 <button type="button" class="fsbtn" id="fsBtn" onclick="toggleFullscreen()"
                         aria-pressed="false" title="Full screen (F11)">
                     <span class="fsIcon"></span><span class="fsLabel">Full screen</span>
@@ -246,12 +243,11 @@
                     if (sDoc.exists) settings = sDoc.data();
                 } catch (e) { /* settings are optional */ }
 
-                // Mask opacity: 0-100 in the dashboard, 0-1 here. Absent = 0 (invisible
-                // but still click-blocking), which is the safe default for old videos.
+                // Masking on/off. Absent means ON — the protective default, and what
+                // every video created before this setting existed should get.
                 {
-                    const pct = Number(settings.maskOpacity);
-                    const frac = (isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0) / 100;
-                    document.querySelector('.card').style.setProperty('--mask-opacity', String(frac));
+                    const on = settings.maskEnabled !== false;
+                    document.querySelector('.card').style.setProperty('--mask-display', on ? 'block' : 'none');
                 }
 
                 // Enforce Student ID rule, if any
@@ -404,33 +400,6 @@
         }
         document.getElementById('pwToggle').innerHTML = ICON_EYE;
 
-        // ============== Captions ==============
-        // The masks cover YouTube's own CC button, so we drive captions ourselves.
-        // loadModule/unloadModule are long-standing but undocumented IFrame API calls;
-        // module name differs between player builds, so we try both.
-        let captionsOn = true;   // cc_load_policy: 1 starts them on
-
-        function setCaptions(on) {
-            try {
-                if (player && on) {
-                    if (player.loadModule) { player.loadModule('captions'); player.loadModule('cc'); }
-                    if (player.setOption) {
-                        try { player.setOption('captions', 'track', { languageCode: 'en' }); } catch (e) {}
-                        try { player.setOption('cc', 'track', { languageCode: 'en' }); } catch (e) {}
-                    }
-                } else if (player && player.unloadModule) {
-                    player.unloadModule('captions'); player.unloadModule('cc');
-                }
-            } catch (e) { /* player not ready yet — the button state below still applies */ }
-            captionsOn = on;
-            const b = document.getElementById('ccBtn');
-            b.querySelector('.ccLabel').textContent = on ? 'On' : 'Off';
-            b.setAttribute('aria-pressed', on ? 'true' : 'false');
-            b.setAttribute('title', on ? 'Turn captions off' : 'Turn captions on');
-            b.style.opacity = on ? '1' : '0.55';
-        }
-        function toggleCaptions() { setCaptions(!captionsOn); }
-
         // ============== Full screen (keeps the banner and info bar) ==============
         // We full-screen the whole card, not the iframe, so the student keeps the
         // class/name/attempt banner on top and the progress bar underneath.
@@ -500,8 +469,10 @@
                 videoId: videoId,
                 // fs: 0 hides YouTube's own full-screen button (and disables its "f" shortcut),
                 // so the only way to go full screen is ours — which keeps the banner and info bar.
+                // cc_load_policy turns captions on by default. cc_lang_pref is deliberately NOT set —
+                // pinning a language removes Auto-translate from the player's caption menu.
                 playerVars: { rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1, fs: 0,
-                             cc_load_policy: 1, cc_lang_pref: 'en' },
+                             cc_load_policy: 1 },
                 events: { onReady: onPlayerReady, onStateChange: onPlayerStateChange }
             });
         }
