@@ -51,9 +51,13 @@
            holds volume, CC and settings, so it is deliberately left clear: captions
            are an accessibility obligation and must stay reachable. */
         .vmask-top { top: 0; left: 0; width: var(--mask-top-width, 70%); }
-        /* Bottom band: full width — share, Watch Later, the YouTube logo and the
-           "Watch on YouTube" link all live here. */
-        .vmask-bottom { bottom: 0; left: 0; right: 0; }
+        /* Bottom band, split in two with a clear channel down the middle. Share and
+           Watch Later sit at the left end, the YouTube logo and "Watch on YouTube" at
+           the right — but the player's own settings/caption menus open CENTRED and
+           reach into this band, so a full-width shield swallowed clicks on
+           Auto-translate. The gap keeps those menus usable. */
+        .vmask-bottom-left  { bottom: 0; left: 0; width: 30%; }
+        .vmask-bottom-right { bottom: 0; right: 0; width: 30%; }
         .status { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; font-size: 0.95em; }
         .bar { flex: 1 1 220px; height: 12px; background: rgba(10,14,35,0.8); border-radius: 6px; overflow: hidden; min-width: 180px; }
         .bar > div { height: 100%; width: 0%; background: linear-gradient(90deg,#4da6ff,#7ee0c0); transition: width 0.4s; }
@@ -149,7 +153,7 @@
         <div id="playerView" class="hidden">
             <h1 id="videoTitle">Video</h1>
             <p class="who" id="whoLine"></p>
-            <div id="videoStage"><div class="videowrap"><div id="ytplayer"></div><div class="vmask vmask-top" id="vmaskTop"></div><div class="vmask vmask-bottom" id="vmaskBottom"></div></div></div>
+            <div id="videoStage"><div class="videowrap"><div id="ytplayer"></div><div class="vmask vmask-top" id="vmaskTop"></div><div class="vmask vmask-bottom-left" id="vmaskBottomLeft"></div><div class="vmask vmask-bottom-right" id="vmaskBottomRight"></div></div></div>
             <div class="status">
                 <span>Watched:</span>
                 <div class="bar"><div id="progressFill"></div></div>
