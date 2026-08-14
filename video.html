@@ -42,10 +42,16 @@
            YouTube's title/channel link, the bottom covers "Watch on YouTube" and the
            logo. They always intercept clicks — --mask-opacity only controls how
            visible they are, so at 0 the corner still cannot be clicked through. */
-        .vmask { position: absolute; left: 0; right: 0; height: 12.5%;
+        .vmask { position: absolute; height: 12.5%;
                  background: #141932; opacity: var(--mask-opacity, 0); z-index: 5; }
-        .vmask-top { top: 0; }
-        .vmask-bottom { bottom: 0; }
+        /* Top band: covers only the LEFT portion — the channel avatar, video title and
+           uploader name, all of which link out to YouTube. The right end of that band
+           holds volume, CC and settings, so it is deliberately left clear: captions
+           are an accessibility obligation and must stay reachable. */
+        .vmask-top { top: 0; left: 0; width: var(--mask-top-width, 70%); }
+        /* Bottom band: full width — share, Watch Later, the YouTube logo and the
+           "Watch on YouTube" link all live here. */
+        .vmask-bottom { bottom: 0; left: 0; right: 0; }
         .status { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; font-size: 0.95em; }
         .bar { flex: 1 1 220px; height: 12px; background: rgba(10,14,35,0.8); border-radius: 6px; overflow: hidden; min-width: 180px; }
         .bar > div { height: 100%; width: 0%; background: linear-gradient(90deg,#4da6ff,#7ee0c0); transition: width 0.4s; }
@@ -150,6 +156,11 @@
             </div>
             <div class="footrow">
                 <p class="who" id="saveLine">Progress saves automatically.</p>
+                <button type="button" class="fsbtn" id="ccBtn" onclick="toggleCaptions()"
+                        aria-pressed="true" title="Turn captions off">
+                    <span style="font-weight:700; letter-spacing:0.5px;">CC</span>
+                    <span class="ccLabel">On</span>
+                </button>
                 <button type="button" class="fsbtn" id="fsBtn" onclick="toggleFullscreen()"
                         aria-pressed="false" title="Full screen (F11)">
                     <span class="fsIcon"></span><span class="fsLabel">Full screen</span>
@@ -393,6 +404,33 @@
         }
         document.getElementById('pwToggle').innerHTML = ICON_EYE;
 
+        // ============== Captions ==============
+        // The masks cover YouTube's own CC button, so we drive captions ourselves.
+        // loadModule/unloadModule are long-standing but undocumented IFrame API calls;
+        // module name differs between player builds, so we try both.
+        let captionsOn = true;   // cc_load_policy: 1 starts them on
+
+        function setCaptions(on) {
+            try {
+                if (player && on) {
+                    if (player.loadModule) { player.loadModule('captions'); player.loadModule('cc'); }
+                    if (player.setOption) {
+                        try { player.setOption('captions', 'track', { languageCode: 'en' }); } catch (e) {}
+                        try { player.setOption('cc', 'track', { languageCode: 'en' }); } catch (e) {}
+                    }
+                } else if (player && player.unloadModule) {
+                    player.unloadModule('captions'); player.unloadModule('cc');
+                }
+            } catch (e) { /* player not ready yet — the button state below still applies */ }
+            captionsOn = on;
+            const b = document.getElementById('ccBtn');
+            b.querySelector('.ccLabel').textContent = on ? 'On' : 'Off';
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+            b.setAttribute('title', on ? 'Turn captions off' : 'Turn captions on');
+            b.style.opacity = on ? '1' : '0.55';
+        }
+        function toggleCaptions() { setCaptions(!captionsOn); }
+
         // ============== Full screen (keeps the banner and info bar) ==============
         // We full-screen the whole card, not the iframe, so the student keeps the
         // class/name/attempt banner on top and the progress bar underneath.
@@ -462,7 +500,8 @@
                 videoId: videoId,
                 // fs: 0 hides YouTube's own full-screen button (and disables its "f" shortcut),
                 // so the only way to go full screen is ours — which keeps the banner and info bar.
-                playerVars: { rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1, fs: 0 },
+                playerVars: { rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1, fs: 0,
+                             cc_load_policy: 1, cc_lang_pref: 'en' },
                 events: { onReady: onPlayerReady, onStateChange: onPlayerStateChange }
             });
         }
