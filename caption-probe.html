@@ -50,7 +50,7 @@
 
 <h1>Caption API Probe</h1>
 <p class="sub">Does the YouTube player let us pick caption languages from our own controls?
-   <span style="color:#4dffb8">· build 4</span></p>
+   <span style="color:#4dffb8">· build 5</span></p>
 
 <div class="card">
     <h2>1 · POINT IT AT A VIDEO</h2>
@@ -94,12 +94,15 @@
         <div style="flex:0 0 auto">
             <button class="ghost" id="offBtn">Captions off</button>
         </div>
+        <div style="flex:0 0 auto">
+            <button class="ghost" id="rereadBtn">Re-read track list</button>
+        </div>
     </div>
 </div>
 
 <div class="card">
     <h2>4 · DETAIL</h2>
-    <pre id="log">build 4 · waiting for the page script…</pre>
+    <pre id="log">build 5 · waiting for the page script…</pre>
 </div>
 
 </div>
@@ -107,7 +110,7 @@
 <script>
 // Runs immediately. If the DETAIL panel never gets past this line, scripts are blocked.
 document.getElementById('log').textContent =
-    'build 4\nurl: ' + location.href + '\nprotocol: ' + location.protocol;
+    'build 5\nurl: ' + location.href + '\nprotocol: ' + location.protocol;
 document.getElementById('vWait').textContent = 'Page script running. Loading the player library…';
 window.addEventListener('error', ev => {
     document.getElementById('log').textContent += '\n\nSCRIPT ERROR: ' + ev.message +
@@ -193,10 +196,11 @@ $('loadBtn').addEventListener('click', () => {
     if (player && player.destroy) player.destroy();
     player = new YT.Player('player', {
         videoId: id,
-        playerVars: { autoplay: 1, mute: 1, controls: 1, rel: 0, playsinline: 1 },
+        playerVars: { autoplay: 1, mute: 1, controls: 1, rel: 0, playsinline: 1, cc_load_policy: 1 },
         events: {
             onReady: e => { e.target.mute(); e.target.playVideo(); log('Player ready.'); },
-            onStateChange: e => { if (e.data === YT.PlayerState.PLAYING) setTimeout(probe, 2500); },
+            onStateChange: e => { if (e.data === YT.PlayerState.PLAYING && !MODULE) {
+                [2500, 6000, 10000].forEach(ms => setTimeout(probe, ms)); } },
             onError: e => verdict('fail',
                 'The player refused this video (error ' + e.data + '). ' +
                 'Private videos and videos with embedding disabled will do this.')
@@ -207,7 +211,7 @@ $('loadBtn').addEventListener('click', () => {
 // The captions module is called 'captions' on the HTML5 player and 'cc' on
 // older ones. Try both and keep whichever answers.
 function probe() {
-    if (MODULE) return;
+    if (MODULE) { rereadTracks(); return; }
     for (const name of ['captions', 'cc']) {
         try {
             player.loadModule(name);
@@ -252,6 +256,17 @@ function probe() {
     });
 
     $('controlCard').style.display = 'block';
+
+    const servable = tracks.filter(t => t.is_servable !== false);
+    if (!servable.length) {
+        verdict('fail',
+            'Found ' + tracks.length + ' track and ' + translations.length + ' translation languages, ' +
+            'but the track is marked is_servable: false — it cannot be rendered, which is why ' +
+            'nothing appeared. The auto-generated track that IS rendering is missing from this list. ' +
+            'Press "Re-read track list" a few times while the video plays and watch whether a second ' +
+            'track shows up.');
+        return;
+    }
     if (translations.length) {
         verdict('pass',
             'Working. ' + tracks.length + ' caption track' + (tracks.length === 1 ? '' : 's') +
@@ -267,14 +282,40 @@ function probe() {
     applyCaptions();
 }
 
+function rereadTracks() {
+    if (!MODULE) { log('\nno module yet'); return; }
+    try { player.loadModule(MODULE); } catch (e) {}
+    const list = player.getOption(MODULE, 'tracklist') || [];
+    log('\nre-read at ' + new Date().toLocaleTimeString() + ' → ' + list.length + ' track(s)', list);
+    if (list.length !== tracks.length) {
+        tracks = list;
+        const ts = $('trackSel'); ts.innerHTML = '';
+        tracks.forEach(t => {
+            const o = document.createElement('option');
+            o.value = t.languageCode;
+            o.textContent = (t.displayName || t.languageName || t.languageCode)
+                          + (t.kind === 'asr' ? ' (auto-generated)' : '')
+                          + (t.is_servable === false ? ' — NOT SERVABLE' : '');
+            ts.appendChild(o);
+        });
+        verdict('wait', 'Track list changed — now ' + tracks.length +
+            ' track(s). Try the selectors again.');
+    }
+}
+
 function applyCaptions() {
     const track = $('trackSel').value;
     const trans = $('transSel').value;
     try {
         if (trans) {
+            // No documented order works reliably, so do all three and reload.
+            player.setOption(MODULE, 'track', { languageCode: track });
             player.setOption(MODULE, 'translationLanguage', { languageCode: trans });
-            player.setOption(MODULE, 'track', { languageCode: track, translationLanguage: { languageCode: trans } });
-            log('\nset track', track, '+ translate →', trans);
+            player.setOption(MODULE, 'track',
+                { languageCode: track, translationLanguage: { languageCode: trans } });
+            try { player.setOption(MODULE, 'reload', true); } catch (e) { log('reload threw:', String(e)); }
+            log('\nset track', track, '+ translate →', trans, '(then reload)');
+            setTimeout(() => log('active track now:', player.getOption(MODULE, 'track')), 1200);
         } else {
             player.setOption(MODULE, 'track', { languageCode: track });
             log('\nset track →', track);
@@ -287,6 +328,7 @@ function applyCaptions() {
 
 $('trackSel').addEventListener('change', applyCaptions);
 $('transSel').addEventListener('change', applyCaptions);
+$('rereadBtn').addEventListener('click', rereadTracks);
 $('offBtn').addEventListener('click', () => {
     try { player.setOption(MODULE, 'track', {}); log('\ncaptions off'); }
     catch (err) { log('turning captions off threw:', String(err)); }
