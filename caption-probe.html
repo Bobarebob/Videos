@@ -50,7 +50,7 @@
 
 <h1>Caption API Probe</h1>
 <p class="sub">Does the YouTube player let us pick caption languages from our own controls?
-   <span style="color:#4dffb8">· build 3</span></p>
+   <span style="color:#4dffb8">· build 4</span></p>
 
 <div class="card">
     <h2>1 · POINT IT AT A VIDEO</h2>
@@ -99,7 +99,7 @@
 
 <div class="card">
     <h2>4 · DETAIL</h2>
-    <pre id="log">build 3 · waiting for the page script…</pre>
+    <pre id="log">build 4 · waiting for the page script…</pre>
 </div>
 
 </div>
@@ -107,7 +107,7 @@
 <script>
 // Runs immediately. If the DETAIL panel never gets past this line, scripts are blocked.
 document.getElementById('log').textContent =
-    'build 3\nurl: ' + location.href + '\nprotocol: ' + location.protocol;
+    'build 4\nurl: ' + location.href + '\nprotocol: ' + location.protocol;
 document.getElementById('vWait').textContent = 'Page script running. Loading the player library…';
 window.addEventListener('error', ev => {
     document.getElementById('log').textContent += '\n\nSCRIPT ERROR: ' + ev.message +
@@ -126,9 +126,11 @@ const log = (...parts) => {
         typeof p === 'string' ? p : JSON.stringify(p, null, 1)).join(' ');
     $('log').scrollTop = $('log').scrollHeight;
 };
+const VERDICT_IDS = { wait: 'vWait', pass: 'vPass', fail: 'vFail' };
 function verdict(kind, msg) {
-    ['vWait','vPass','vFail'].forEach(i => $(i).style.display = 'none');
-    const el = $('v' + kind);
+    Object.values(VERDICT_IDS).forEach(i => { const e = $(i); if (e) e.style.display = 'none'; });
+    const el = $(VERDICT_IDS[kind]);          // was 'v' + kind -> 'vwait', which is not an id
+    if (!el) { log('verdict(): unknown kind ' + kind + ' — ' + msg); return; }
     el.textContent = msg;
     el.style.display = 'block';
 }
