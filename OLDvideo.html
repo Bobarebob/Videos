@@ -66,18 +66,6 @@
         .vmask-bottom-left  { bottom: 0; left: 0;  width: var(--mask-bl-w, 30%); height: var(--mask-bottom-h, 12.5%); }
         .vmask-bottom-right { bottom: 0; right: 0; width: var(--mask-br-w, 30%); height: var(--mask-bottom-h, 12.5%); }
 
-        /* ---- player load failure panel ----
-           Sits over the black box when the iframe never comes up, so the student
-           gets an explanation and a reload button instead of a silent void. */
-        #loadFail { position: absolute; inset: 0; z-index: 8; display: none;
-                    flex-direction: column; align-items: center; justify-content: center;
-                    gap: 14px; padding: 24px; text-align: center;
-                    background: rgba(4,9,28,0.96); color: #dce6ff; }
-        #loadFail.show { display: flex; }
-        #loadFail p { margin: 0; font-size: 1.02em; line-height: 1.5; max-width: 34em; }
-        #loadFail .why { color: #9aa4c0; font-size: 0.85em; }
-        #loadFail button { width: auto; margin-top: 4px; padding: 10px 22px; font-size: 0.95em; }
-
         /* ---- calibration mode (#maskcal) — never seen by students ---- */
         body.maskcal .vmask { background: rgba(255,60,60,0.30); outline: 1px dashed rgba(255,255,255,0.55); }
         body.maskcal .vmask.calsel { background: rgba(0,190,255,0.42); outline: 2px solid #7ee0c0; }
@@ -182,7 +170,7 @@
         <div id="playerView" class="hidden">
             <h1 id="videoTitle">Video</h1>
             <p class="who" id="whoLine"></p>
-            <div id="videoStage"><div class="videowrap"><div id="ytplayer"></div><div class="vmask vmask-top-left" id="vmaskTopLeft"></div><div class="vmask vmask-top-right" id="vmaskTopRight"></div><div class="vmask vmask-bottom-left" id="vmaskBottomLeft"></div><div class="vmask vmask-bottom-right" id="vmaskBottomRight"></div><div id="loadFail"><p id="loadFailMsg">The video didn't load.</p><p class="why" id="loadFailWhy"></p><button type="button" onclick="location.reload()">Reload the page</button></div></div></div>
+            <div id="videoStage"><div class="videowrap"><div id="ytplayer"></div><div class="vmask vmask-top-left" id="vmaskTopLeft"></div><div class="vmask vmask-top-right" id="vmaskTopRight"></div><div class="vmask vmask-bottom-left" id="vmaskBottomLeft"></div><div class="vmask vmask-bottom-right" id="vmaskBottomRight"></div></div></div>
             <div class="status">
                 <span>Watched:</span>
                 <div class="bar"><div id="progressFill"></div></div>
@@ -488,15 +476,6 @@
         (function loadYT() {
             const tag = document.createElement('script');
             tag.src = 'https://www.youtube.com/iframe_api';
-            // Fires when an ad blocker or the network kills the API script outright —
-            // the most likely cause of the intermittent blank player.
-            tag.onerror = function () {
-                console.error('[video] iframe_api script failed to load (blocked or offline)');
-                showLoadFail(
-                    'The video player could not start.',
-                    'Something blocked YouTube\u2019s player script \u2014 usually an ad blocker, privacy extension or VPN. Turn it off for this page and reload.'
-                );
-            };
             document.head.appendChild(tag);
         })();
         window.onYouTubeIframeAPIReady = function () {
@@ -515,68 +494,11 @@
                 // pinning a language removes Auto-translate from the player's caption menu.
                 playerVars: { rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1, fs: 0,
                              cc_load_policy: 1 },
-                events: { onReady: onPlayerReady, onStateChange: onPlayerStateChange,
-                          onError: onPlayerError }
+                events: { onReady: onPlayerReady, onStateChange: onPlayerStateChange }
             });
-            startLoadWatchdog();
-        }
-
-        // ============== load failure handling ==============
-        // Two ways the player can fail a student: YouTube reports an error code,
-        // or nothing happens at all (the API script blocked, the network stalled)
-        // and onReady simply never fires. The first is caught by onError, the
-        // second by a watchdog. Either way the student sees why and can retry.
-        let loadWatchdog = null, playerLive = false;
-        const LOAD_TIMEOUT_MS = 10000;
-
-        function showLoadFail(msg, why) {
-            const box = document.getElementById('loadFail');
-            if (!box) return;
-            document.getElementById('loadFailMsg').textContent = msg;
-            document.getElementById('loadFailWhy').textContent = why || '';
-            box.classList.add('show');
-        }
-
-        function clearLoadWatchdog() {
-            playerLive = true;
-            if (loadWatchdog) { clearTimeout(loadWatchdog); loadWatchdog = null; }
-            const box = document.getElementById('loadFail');
-            if (box) box.classList.remove('show');
-        }
-
-        function startLoadWatchdog() {
-            if (loadWatchdog) clearTimeout(loadWatchdog);
-            loadWatchdog = setTimeout(function () {
-                if (playerLive) return;
-                console.warn('[video] player did not report ready within ' + LOAD_TIMEOUT_MS + 'ms');
-                showLoadFail(
-                    'The video didn\u2019t load.',
-                    'It usually works on a second try. If it keeps failing, check that no ad blocker or VPN is running.'
-                );
-            }, LOAD_TIMEOUT_MS);
-        }
-
-        // YouTube's documented error codes.
-        function onPlayerError(e) {
-            const codes = {
-                2:   'The video ID in this link is not valid.',
-                5:   'This video cannot play in the browser\u2019s player.',
-                100: 'The video is private or has been removed.',
-                101: 'The owner does not allow this video to be embedded.',
-                150: 'The owner does not allow this video to be embedded.'
-            };
-            console.error('[video] YouTube error code', e && e.data);
-            clearLoadWatchdog();               // stop the generic message racing this one
-            playerLive = false;
-            showLoadFail(
-                'This video could not be played.',
-                (codes[e && e.data] || 'YouTube reported an unexpected error.') +
-                ' (code ' + (e && e.data) + ') Tell your instructor if this keeps happening.'
-            );
         }
 
         function onPlayerReady() {
-            clearLoadWatchdog();
             duration = Math.floor(player.getDuration());
             if (!duration || duration < 1) { setTimeout(onPlayerReady, 600); return; } // metadata not ready yet
             numCells = Math.max(1, Math.ceil(duration / CELL_SECONDS));
