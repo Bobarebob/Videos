@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Caption API Probe</title>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700&family=Nunito:wght@300;400;600;700&display=swap');
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:'Nunito','Segoe UI',sans-serif;
+        background:radial-gradient(ellipse at 30% 20%,#0d0d2b 0%,#050510 60%,#0a0010 100%);
+        color:#e0e0e0;line-height:1.6;min-height:100vh;padding:28px 20px}
+    .wrap{max-width:1040px;margin:0 auto}
+    h1{font-family:'Orbitron',monospace;font-size:1.5em;letter-spacing:2px;
+        background:linear-gradient(90deg,#4fc3f7,#e879f9);-webkit-background-clip:text;
+        -webkit-text-fill-color:transparent;margin-bottom:4px}
+    .sub{color:#8a9abf;font-style:italic;margin-bottom:24px}
+    .card{background:rgba(6,6,18,.97);border:1px solid rgba(79,195,247,.2);
+        border-radius:14px;padding:22px 24px;margin-bottom:18px}
+    .card h2{font-family:'Orbitron',monospace;font-size:.82em;letter-spacing:2px;
+        color:#4dffb8;margin-bottom:14px}
+    label{display:block;font-size:.86em;color:#8a9abf;margin-bottom:6px}
+    input[type=text],select{width:100%;padding:11px 13px;background:rgba(4,4,14,.9);
+        color:#e8f4ff;border:1px solid rgba(79,195,247,.28);border-radius:9px;
+        font-family:inherit;font-size:.98em}
+    input:focus,select:focus{outline:none;border-color:#4fc3f7}
+    button{padding:11px 22px;border:none;border-radius:9px;cursor:pointer;
+        font-family:'Orbitron',monospace;font-size:.72em;letter-spacing:1.4px;
+        background:linear-gradient(135deg,#4fc3f7,#0288d1);color:#03121f;font-weight:700}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    button.ghost{background:linear-gradient(135deg,#2a2a4a,#1a1a36);color:#4fc3f7;
+        border:1px solid rgba(79,195,247,.4)}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px}
+    .row>div{flex:1;min-width:200px}
+    #player{width:100%;aspect-ratio:16/9;background:#000;border-radius:10px;
+        border:1px solid rgba(79,195,247,.25)}
+    .verdict{padding:14px 18px;border-radius:10px;margin-bottom:12px;font-size:1.02em;display:none}
+    .verdict.pass{background:rgba(77,255,184,.1);border:1px solid rgba(77,255,184,.5);color:#4dffb8}
+    .verdict.fail{background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.5);color:#ff8a8a}
+    .verdict.wait{background:rgba(255,167,38,.1);border:1px solid rgba(255,167,38,.5);color:#ffc266}
+    pre{background:rgba(4,4,14,.9);border:1px solid rgba(79,195,247,.18);border-radius:9px;
+        padding:14px;font-size:.82em;color:#9fd8ff;overflow-x:auto;white-space:pre-wrap;
+        max-height:340px;overflow-y:auto;font-family:'Consolas',monospace}
+    .hint{font-size:.85em;color:#6b7f9e;margin-top:10px}
+    .hint code{color:#9fd8ff}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Caption API Probe</h1>
+<p class="sub">Does the YouTube player let us pick caption languages from our own controls?</p>
+
+<div class="card">
+    <h2>1 · POINT IT AT A VIDEO</h2>
+    <div class="row">
+        <div>
+            <label for="vid">Video ID or full YouTube link</label>
+            <input type="text" id="vid" placeholder="e.g. dQw4w9WgXcQ  —  or paste the whole watch/embed URL">
+        </div>
+        <div style="flex:0 0 auto">
+            <button id="loadBtn">Load and probe</button>
+        </div>
+    </div>
+    <p class="hint">Use one of your own course videos. The probe plays it muted for a few seconds —
+        the caption controls don't exist until playback has started.</p>
+</div>
+
+<div class="card">
+    <h2>2 · RESULT</h2>
+    <div class="verdict wait" id="vWait">Loading the player…</div>
+    <div class="verdict pass" id="vPass"></div>
+    <div class="verdict fail" id="vFail"></div>
+    <div id="player"></div>
+</div>
+
+<div class="card" id="controlCard" style="display:none">
+    <h2>3 · TRY IT — THIS IS THE PART THAT MATTERS</h2>
+    <p class="hint" style="margin:0 0 14px">Change these and watch the captions on the video.
+        If the text switches language, we can build this into your banner and cover the gear icon entirely.</p>
+    <div class="row">
+        <div>
+            <label for="trackSel">Caption track</label>
+            <select id="trackSel"></select>
+        </div>
+        <div>
+            <label for="transSel">Translate to</label>
+            <select id="transSel"></select>
+        </div>
+        <div style="flex:0 0 auto">
+            <button class="ghost" id="offBtn">Captions off</button>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>4 · DETAIL</h2>
+    <pre id="log">Waiting.</pre>
+</div>
+
+</div>
+
+<script>
+// No API key needed anywhere in this file. The IFrame Player API is a plain
+// JavaScript library — the key/quota system belongs to the Data API, which we
+// are not using.
+let player = null, MODULE = null, tracks = [], translations = [];
+
+const $ = id => document.getElementById(id);
+const log = (...parts) => {
+    $('log').textContent += '\n' + parts.map(p =>
+        typeof p === 'string' ? p : JSON.stringify(p, null, 1)).join(' ');
+    $('log').scrollTop = $('log').scrollHeight;
+};
+function verdict(kind, msg) {
+    ['vWait','vPass','vFail'].forEach(i => $(i).style.display = 'none');
+    const el = $('v' + kind);
+    el.textContent = msg;
+    el.style.display = 'block';
+}
+
+// Accepts a bare ID, a watch URL, a short link, or an embed URL.
+function parseId(raw) {
+    raw = (raw || '').trim();
+    if (!raw) return '';
+    const m = raw.match(/(?:v=|\/embed\/|youtu\.be\/|\/shorts\/)([A-Za-z0-9_-]{6,})/);
+    if (m) return m[1];
+    return /^[A-Za-z0-9_-]{6,}$/.test(raw) ? raw : '';
+}
+
+// Load the IFrame API once.
+const tag = document.createElement('script');
+tag.src = 'https://www.youtube.com/iframe_api';
+document.head.appendChild(tag);
+
+let apiReady = false;
+window.onYouTubeIframeAPIReady = () => {
+    apiReady = true;
+    verdict('wait', 'Player library loaded. Enter a video ID and press Load and probe.');
+    log('IFrame API ready.');
+};
+
+$('loadBtn').addEventListener('click', () => {
+    const id = parseId($('vid').value);
+    if (!id) { verdict('fail', "That doesn't look like a video ID or a YouTube link."); return; }
+    if (!apiReady) { verdict('wait', 'Player library still loading — try again in a second.'); return; }
+
+    $('log').textContent = 'Probing video ' + id;
+    $('controlCard').style.display = 'none';
+    verdict('wait', 'Starting playback (muted) — the caption controls appear a few seconds in…');
+
+    if (player && player.destroy) player.destroy();
+    player = new YT.Player('player', {
+        videoId: id,
+        playerVars: { autoplay: 1, mute: 1, controls: 1, rel: 0, playsinline: 1 },
+        events: {
+            onReady: e => { e.target.mute(); e.target.playVideo(); log('Player ready.'); },
+            onStateChange: e => { if (e.data === YT.PlayerState.PLAYING) setTimeout(probe, 2500); },
+            onError: e => verdict('fail',
+                'The player refused this video (error ' + e.data + '). ' +
+                'Private videos and videos with embedding disabled will do this.')
+        }
+    });
+});
+
+// The captions module is called 'captions' on the HTML5 player and 'cc' on
+// older ones. Try both and keep whichever answers.
+function probe() {
+    if (MODULE) return;
+    for (const name of ['captions', 'cc']) {
+        try {
+            player.loadModule(name);
+            const list = player.getOption(name, 'tracklist');
+            log('\nmodule "' + name + '" tracklist →', list);
+            if (list && list.length) { MODULE = name; break; }
+        } catch (err) { log('module "' + name + '" threw:', String(err)); }
+    }
+
+    if (!MODULE) {
+        verdict('fail',
+            'No caption tracks came back. Either this video has no captions, or the ' +
+            'undocumented captions API is not available on this player. Try a video ' +
+            'you know has captions before concluding it failed.');
+        return;
+    }
+
+    tracks = player.getOption(MODULE, 'tracklist') || [];
+    try { translations = player.getOption(MODULE, 'translationLanguages') || []; }
+    catch (err) { translations = []; log('translationLanguages threw:', String(err)); }
+
+    log('\nUsing module:', MODULE);
+    log('Tracks:', tracks.length, '· Translation languages:', translations.length);
+
+    const ts = $('trackSel');
+    ts.innerHTML = '';
+    tracks.forEach(t => {
+        const o = document.createElement('option');
+        o.value = t.languageCode;
+        o.textContent = (t.displayName || t.languageName || t.languageCode)
+                      + (t.kind === 'asr' ? ' (auto-generated)' : '');
+        ts.appendChild(o);
+    });
+
+    const xs = $('transSel');
+    xs.innerHTML = '<option value="">— no translation —</option>';
+    translations.forEach(t => {
+        const o = document.createElement('option');
+        o.value = t.languageCode;
+        o.textContent = t.languageName || t.languageCode;
+        xs.appendChild(o);
+    });
+
+    $('controlCard').style.display = 'block';
+    if (translations.length) {
+        verdict('pass',
+            'Working. ' + tracks.length + ' caption track' + (tracks.length === 1 ? '' : 's') +
+            ' and ' + translations.length + ' translation languages, all reachable from our own code. ' +
+            'Now use the controls below and check that the captions actually change.');
+    } else {
+        verdict('pass',
+            'Partly working. ' + tracks.length + ' caption track' + (tracks.length === 1 ? '' : 's') +
+            ' is reachable, but no translation list came back — so language switching may work ' +
+            'while auto-translate does not. Try the track selector below.');
+    }
+
+    applyCaptions();
+}
+
+function applyCaptions() {
+    const track = $('trackSel').value;
+    const trans = $('transSel').value;
+    try {
+        if (trans) {
+            player.setOption(MODULE, 'translationLanguage', { languageCode: trans });
+            player.setOption(MODULE, 'track', { languageCode: track, translationLanguage: { languageCode: trans } });
+            log('\nset track', track, '+ translate →', trans);
+        } else {
+            player.setOption(MODULE, 'track', { languageCode: track });
+            log('\nset track →', track);
+        }
+    } catch (err) {
+        log('setOption threw:', String(err));
+        verdict('fail', 'Reading the caption list worked, but setting one failed: ' + err);
+    }
+}
+
+$('trackSel').addEventListener('change', applyCaptions);
+$('transSel').addEventListener('change', applyCaptions);
+$('offBtn').addEventListener('click', () => {
+    try { player.setOption(MODULE, 'track', {}); log('\ncaptions off'); }
+    catch (err) { log('turning captions off threw:', String(err)); }
+});
+</script>
+</body>
+</html>
