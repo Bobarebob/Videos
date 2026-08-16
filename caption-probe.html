@@ -50,7 +50,7 @@
 
 <h1>Caption API Probe</h1>
 <p class="sub">Does the YouTube player let us pick caption languages from our own controls?
-   <span style="color:#4dffb8">· build 5</span></p>
+   <span style="color:#4dffb8">· build 6</span></p>
 
 <div class="card">
     <h2>1 · POINT IT AT A VIDEO</h2>
@@ -80,6 +80,7 @@
 
 <div class="card" id="controlCard" style="display:none">
     <h2>3 · TRY IT — THIS IS THE PART THAT MATTERS</h2>
+    <p class="hint" id="activeState" style="margin:0 0 6px;color:#4dffb8">active track: —</p>
     <p class="hint" style="margin:0 0 14px">Change these and watch the captions on the video.
         If the text switches language, we can build this into your banner and cover the gear icon entirely.</p>
     <div class="row">
@@ -92,6 +93,9 @@
             <select id="transSel"></select>
         </div>
         <div style="flex:0 0 auto">
+            <button class="ghost" id="onBtn">Captions on</button>
+        </div>
+        <div style="flex:0 0 auto">
             <button class="ghost" id="offBtn">Captions off</button>
         </div>
         <div style="flex:0 0 auto">
@@ -102,7 +106,7 @@
 
 <div class="card">
     <h2>4 · DETAIL</h2>
-    <pre id="log">build 5 · waiting for the page script…</pre>
+    <pre id="log">build 6 · waiting for the page script…</pre>
 </div>
 
 </div>
@@ -110,7 +114,7 @@
 <script>
 // Runs immediately. If the DETAIL panel never gets past this line, scripts are blocked.
 document.getElementById('log').textContent =
-    'build 5\nurl: ' + location.href + '\nprotocol: ' + location.protocol;
+    'build 6\nurl: ' + location.href + '\nprotocol: ' + location.protocol;
 document.getElementById('vWait').textContent = 'Page script running. Loading the player library…';
 window.addEventListener('error', ev => {
     document.getElementById('log').textContent += '\n\nSCRIPT ERROR: ' + ev.message +
@@ -257,16 +261,6 @@ function probe() {
 
     $('controlCard').style.display = 'block';
 
-    const servable = tracks.filter(t => t.is_servable !== false);
-    if (!servable.length) {
-        verdict('fail',
-            'Found ' + tracks.length + ' track and ' + translations.length + ' translation languages, ' +
-            'but the track is marked is_servable: false — it cannot be rendered, which is why ' +
-            'nothing appeared. The auto-generated track that IS rendering is missing from this list. ' +
-            'Press "Re-read track list" a few times while the video plays and watch whether a second ' +
-            'track shows up.');
-        return;
-    }
     if (translations.length) {
         verdict('pass',
             'Working. ' + tracks.length + ' caption track' + (tracks.length === 1 ? '' : 's') +
@@ -303,9 +297,43 @@ function rereadTracks() {
     }
 }
 
+// Turning captions off by setting an empty track leaves the module in a state
+// where our later calls are ignored. Load/unload the whole module instead.
+function captionsOn() {
+    try {
+        player.loadModule(MODULE);
+        const cur = player.getOption(MODULE, 'track');
+        log('\ncaptions on · active track →', cur);
+        if (!cur || !cur.languageCode) {
+            const fallback = tracks[0] ? tracks[0].languageCode : 'en';
+            player.setOption(MODULE, 'track', { languageCode: fallback });
+            log('no active track; set →', fallback);
+        }
+        setOptionState();
+    } catch (e) { log('captionsOn threw:', String(e)); }
+}
+
+function captionsOff() {
+    try { player.unloadModule(MODULE); log('\ncaptions off (module unloaded)'); setOptionState(); }
+    catch (e) { log('captionsOff threw:', String(e)); }
+}
+
+function setOptionState() {
+    setTimeout(() => {
+        try { $('activeState').textContent =
+            'active track: ' + JSON.stringify(player.getOption(MODULE, 'track')); }
+        catch (e) { $('activeState').textContent = 'active track: unavailable'; }
+    }, 900);
+}
+
 function applyCaptions() {
-    const track = $('trackSel').value;
+    // Base the translation on whatever track is genuinely playing, not on the
+    // tracklist entry — that one is is_servable:false and goes nowhere.
+    let base = null;
+    try { base = player.getOption(MODULE, 'track'); } catch (e) {}
+    const track = (base && base.languageCode) ? base.languageCode : $('trackSel').value;
     const trans = $('transSel').value;
+    log('\nbase track for translation →', track);
     try {
         if (trans) {
             // No documented order works reliably, so do all three and reload.
@@ -314,8 +342,8 @@ function applyCaptions() {
             player.setOption(MODULE, 'track',
                 { languageCode: track, translationLanguage: { languageCode: trans } });
             try { player.setOption(MODULE, 'reload', true); } catch (e) { log('reload threw:', String(e)); }
-            log('\nset track', track, '+ translate →', trans, '(then reload)');
-            setTimeout(() => log('active track now:', player.getOption(MODULE, 'track')), 1200);
+            log('set track', track, '+ translate →', trans, '(then reload)');
+            setOptionState();
         } else {
             player.setOption(MODULE, 'track', { languageCode: track });
             log('\nset track →', track);
@@ -329,10 +357,8 @@ function applyCaptions() {
 $('trackSel').addEventListener('change', applyCaptions);
 $('transSel').addEventListener('change', applyCaptions);
 $('rereadBtn').addEventListener('click', rereadTracks);
-$('offBtn').addEventListener('click', () => {
-    try { player.setOption(MODULE, 'track', {}); log('\ncaptions off'); }
-    catch (err) { log('turning captions off threw:', String(err)); }
-});
+$('onBtn').addEventListener('click', captionsOn);
+$('offBtn').addEventListener('click', captionsOff);
 </script>
 </body>
 </html>
