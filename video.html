@@ -44,20 +44,37 @@
            visible they are, so at 0 the corner still cannot be clicked through. */
         /* Always fully transparent — the point is intercepting the click, not hiding
            anything. --mask-display is set from the per-video setting. */
-        .vmask { display: var(--mask-display, block); position: absolute; height: 12.5%;
+        .vmask { display: var(--mask-display, block); position: absolute;
                  background: transparent; z-index: 5; }
-        /* Top band: covers only the LEFT portion — the channel avatar, video title and
-           uploader name, all of which link out to YouTube. The right end of that band
-           holds volume, CC and settings, so it is deliberately left clear: captions
-           are an accessibility obligation and must stay reachable. */
-        .vmask-top { top: 0; left: 0; width: var(--mask-top-width, 70%); }
+        /* Top band, split in two with a NOTCH between them.
+           Left shield  : channel avatar, video title, uploader name — all exit links.
+           Right shield : the settings gear, whose menu leads to "More options" >
+                          Sign in / Copy video URL. No shield HEIGHT could block that
+                          without also blocking Auto-translate one row above it, so
+                          the gear is blocked by width instead.
+           The notch between them leaves volume and CC clickable.
+           All four shields are tunable below. To find the right numbers on a live
+           player, open this page with #maskcal on the end of the URL — see the
+           calibration block at the foot of the file. */
+        .vmask-top-left  { top: 0; left: 0;  width: var(--mask-tl-w, 62%); height: var(--mask-top-h, 12.5%); }
+        .vmask-top-right { top: 0; right: 0; width: var(--mask-tr-w, 10%); height: var(--mask-top-h, 12.5%); }
         /* Bottom band, split in two with a clear channel down the middle. Share and
            Watch Later sit at the left end, the YouTube logo and "Watch on YouTube" at
            the right — but the player's own settings/caption menus open CENTRED and
            reach into this band, so a full-width shield swallowed clicks on
            Auto-translate. The gap keeps those menus usable. */
-        .vmask-bottom-left  { bottom: 0; left: 0; width: 30%; }
-        .vmask-bottom-right { bottom: 0; right: 0; width: 30%; }
+        .vmask-bottom-left  { bottom: 0; left: 0;  width: var(--mask-bl-w, 30%); height: var(--mask-bottom-h, 12.5%); }
+        .vmask-bottom-right { bottom: 0; right: 0; width: var(--mask-br-w, 30%); height: var(--mask-bottom-h, 12.5%); }
+
+        /* ---- calibration mode (#maskcal) — never seen by students ---- */
+        body.maskcal .vmask { background: rgba(255,60,60,0.30); outline: 1px dashed rgba(255,255,255,0.55); }
+        body.maskcal .vmask.calsel { background: rgba(0,190,255,0.42); outline: 2px solid #7ee0c0; }
+        #calPanel { position: fixed; left: 12px; bottom: 12px; z-index: 9999; background: rgba(6,12,32,0.94);
+                    border: 1px solid #4da6ff; border-radius: 8px; padding: 12px 14px; color: #dce6ff;
+                    font: 12px/1.5 ui-monospace, Consolas, monospace; max-width: 380px; }
+        #calPanel b { color: #7ee0c0; }
+        #calPanel code { display: block; margin-top: 8px; padding: 8px; background: #04091c;
+                         border-radius: 5px; color: #9fd0ff; white-space: pre; font-size: 11px; }
         .status { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; font-size: 0.95em; }
         .bar { flex: 1 1 220px; height: 12px; background: rgba(10,14,35,0.8); border-radius: 6px; overflow: hidden; min-width: 180px; }
         .bar > div { height: 100%; width: 0%; background: linear-gradient(90deg,#4da6ff,#7ee0c0); transition: width 0.4s; }
@@ -153,7 +170,7 @@
         <div id="playerView" class="hidden">
             <h1 id="videoTitle">Video</h1>
             <p class="who" id="whoLine"></p>
-            <div id="videoStage"><div class="videowrap"><div id="ytplayer"></div><div class="vmask vmask-top" id="vmaskTop"></div><div class="vmask vmask-bottom-left" id="vmaskBottomLeft"></div><div class="vmask vmask-bottom-right" id="vmaskBottomRight"></div></div></div>
+            <div id="videoStage"><div class="videowrap"><div id="ytplayer"></div><div class="vmask vmask-top-left" id="vmaskTopLeft"></div><div class="vmask vmask-top-right" id="vmaskTopRight"></div><div class="vmask vmask-bottom-left" id="vmaskBottomLeft"></div><div class="vmask vmask-bottom-right" id="vmaskBottomRight"></div></div></div>
             <div class="status">
                 <span>Watched:</span>
                 <div class="bar"><div id="progressFill"></div></div>
@@ -578,6 +595,93 @@
         document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveProgress(true); });
         window.addEventListener('pagehide', () => saveProgress(true));
         window.addEventListener('beforeunload', () => saveProgress(true));
+    </script>
+    <!-- ============================================================
+         SHIELD CALIBRATION  —  add #maskcal to the end of the URL.
+         Nothing below runs for a student; without the hash this block
+         does nothing at all and the shields stay invisible.
+
+           1 2 3 4      pick a shield (top-left, top-right, bottom-left, bottom-right)
+           left/right   widen / narrow it by 1%   (hold Shift for 0.25%)
+           up/down      taller / shorter by 0.5%  (top pair and bottom pair move together)
+           C            copy the finished CSS values to the clipboard
+
+         Play the video, hover so YouTube's controls appear, and nudge the
+         blue shield until it just covers the gear with volume and CC still
+         clear. Then paste the printed values over the defaults in the CSS.
+         ============================================================ -->
+    <script>
+    (function () {
+      if (!/maskcal/i.test(location.hash + location.search)) return;
+
+      var SH = [
+        { key: '--mask-tl-w', el: 'vmaskTopLeft',     name: 'top-left  (title/channel)', def: 62 },
+        { key: '--mask-tr-w', el: 'vmaskTopRight',    name: 'top-right (gear)',          def: 10 },
+        { key: '--mask-bl-w', el: 'vmaskBottomLeft',  name: 'bottom-left (share)',       def: 30 },
+        { key: '--mask-br-w', el: 'vmaskBottomRight', name: 'bottom-right (logo)',       def: 30 }
+      ];
+      var topH = 12.5, botH = 12.5, sel = 1;
+
+      document.body.classList.add('maskcal');
+      var panel = document.createElement('div');
+      panel.id = 'calPanel';
+      document.body.appendChild(panel);
+
+      function card() { return document.querySelector('.card'); }
+
+      function apply() {
+        var c = card(); if (!c) return;
+        SH.forEach(function (s) { c.style.setProperty(s.key, s.def + '%'); });
+        c.style.setProperty('--mask-top-h', topH + '%');
+        c.style.setProperty('--mask-bottom-h', botH + '%');
+        SH.forEach(function (s, i) {
+          var el = document.getElementById(s.el);
+          if (el) el.classList.toggle('calsel', i === sel);
+        });
+        draw();
+      }
+
+      function cssText() {
+        return '.vmask-top-left  { width: ' + SH[0].def + '%; height: ' + topH + '%; }\n' +
+               '.vmask-top-right { width: ' + SH[1].def + '%; height: ' + topH + '%; }\n' +
+               '.vmask-bottom-left  { width: ' + SH[2].def + '%; height: ' + botH + '%; }\n' +
+               '.vmask-bottom-right { width: ' + SH[3].def + '%; height: ' + botH + '%; }';
+      }
+
+      function draw() {
+        var notch = (100 - SH[0].def - SH[1].def).toFixed(2);
+        panel.innerHTML =
+          '<b>Shield calibration</b> &mdash; 1-4 pick &middot; arrows size &middot; C copy<br>' +
+          'editing: <b>' + SH[sel].name + '</b><br>' +
+          'top notch (volume + CC): <b>' + notch + '%</b> wide' +
+          '<code>' + cssText().replace(/</g, '&lt;') + '</code>';
+      }
+
+      document.addEventListener('keydown', function (e) {
+        var k = e.key;
+        if (k >= '1' && k <= '4') { sel = +k - 1; apply(); e.preventDefault(); return; }
+        var step = e.shiftKey ? 0.25 : 1;
+        if (k === 'ArrowRight') { SH[sel].def = Math.min(100, SH[sel].def + step); }
+        else if (k === 'ArrowLeft') { SH[sel].def = Math.max(0, SH[sel].def - step); }
+        else if (k === 'ArrowUp' || k === 'ArrowDown') {
+          var d = (k === 'ArrowUp' ? 0.5 : -0.5);
+          if (sel < 2) topH = Math.min(50, Math.max(2, topH + d));
+          else botH = Math.min(50, Math.max(2, botH + d));
+        }
+        else if (k === 'c' || k === 'C') {
+          navigator.clipboard && navigator.clipboard.writeText(cssText());
+          panel.style.borderColor = '#7ee0c0';
+          setTimeout(function () { panel.style.borderColor = '#4da6ff'; }, 400);
+          return;
+        }
+        else return;
+        e.preventDefault();
+        apply();
+      });
+
+      // The card only exists once the player view is shown, so re-apply on login.
+      var t = setInterval(function () { if (card()) { apply(); clearInterval(t); } }, 400);
+    })();
     </script>
 </body>
 </html>
