@@ -49,7 +49,8 @@
 <div class="wrap">
 
 <h1>Caption API Probe</h1>
-<p class="sub">Does the YouTube player let us pick caption languages from our own controls?</p>
+<p class="sub">Does the YouTube player let us pick caption languages from our own controls?
+   <span style="color:#4dffb8">· build 3</span></p>
 
 <div class="card">
     <h2>1 · POINT IT AT A VIDEO</h2>
@@ -68,7 +69,10 @@
 
 <div class="card">
     <h2>2 · RESULT</h2>
-    <div class="verdict wait" id="vWait">Loading the player…</div>
+    <div class="verdict wait" id="vWait" style="display:block">
+        Page loaded, but no script has run yet. If this message never changes, JavaScript is
+        being blocked on this page — check the shield icon and the VPN.
+    </div>
     <div class="verdict pass" id="vPass"></div>
     <div class="verdict fail" id="vFail"></div>
     <div id="player"></div>
@@ -95,11 +99,21 @@
 
 <div class="card">
     <h2>4 · DETAIL</h2>
-    <pre id="log">Waiting.</pre>
+    <pre id="log">build 3 · waiting for the page script…</pre>
 </div>
 
 </div>
 
+<script>
+// Runs immediately. If the DETAIL panel never gets past this line, scripts are blocked.
+document.getElementById('log').textContent =
+    'build 3\nurl: ' + location.href + '\nprotocol: ' + location.protocol;
+document.getElementById('vWait').textContent = 'Page script running. Loading the player library…';
+window.addEventListener('error', ev => {
+    document.getElementById('log').textContent += '\n\nSCRIPT ERROR: ' + ev.message +
+        '  (' + (ev.filename || '') + ':' + (ev.lineno || '') + ')';
+});
+</script>
 <script>
 // No API key needed anywhere in this file. The IFrame Player API is a plain
 // JavaScript library — the key/quota system belongs to the Data API, which we
@@ -131,6 +145,12 @@ function parseId(raw) {
 // Load the IFrame API once.
 const tag = document.createElement('script');
 tag.src = 'https://www.youtube.com/iframe_api';
+tag.onerror = () => {
+    verdict('fail',
+        'The browser refused to fetch youtube.com/iframe_api. That is an extension or the ' +
+        'VPN blocking it, not a problem with the page. Turn the shield off for this site and reload.');
+    log('script fetch failed: ' + tag.src);
+};
 document.head.appendChild(tag);
 
 let apiReady = false;
@@ -139,6 +159,25 @@ window.onYouTubeIframeAPIReady = () => {
     verdict('wait', 'Player library loaded. Enter a video ID and press Load and probe.');
     log('IFrame API ready.');
 };
+
+// Opening this file straight off the hard drive gives the page a "null" origin,
+// and YouTube's player refuses to talk to that. It has to be served over http(s).
+if (location.protocol === 'file:') {
+    verdict('fail',
+        "This page is open from your hard drive (file:///), and YouTube's player won't run " +
+        'that way — it needs a real web address. Put this file in your GitHub repo and open ' +
+        'it from bobarebob.github.io instead.');
+    log('Blocked: file:// origin. Serve over http(s).');
+}
+
+// If the library never arrives, say so rather than sitting there.
+setTimeout(() => {
+    if (apiReady || location.protocol === 'file:') return;
+    verdict('fail',
+        "The YouTube player library never loaded. Most likely an ad blocker or the VPN is " +
+        'blocking youtube.com — try again with those off for this page.');
+    log('Timed out waiting for the IFrame API.');
+}, 8000);
 
 $('loadBtn').addEventListener('click', () => {
     const id = parseId($('vid').value);
