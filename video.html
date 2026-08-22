@@ -66,6 +66,19 @@
         .vmask-bottom-left  { bottom: 0; left: 0;  width: var(--mask-bl-w, 30%); height: var(--mask-bottom-h, 12.5%); }
         .vmask-bottom-right { bottom: 0; right: 0; width: var(--mask-br-w, 30%); height: var(--mask-bottom-h, 12.5%); }
 
+        /* ---- copyright notice ----
+           Lives in the card, in the gap between the attempt banner and the player —
+           NOT on the player itself. Anything drawn over the video advertises that a
+           layer is there, which invites students to probe the click shields; the
+           point of the shields is that the player looks completely stock. Here it
+           reads as ordinary page furniture and stays legible over any frame. It
+           rides inside the card, so our full-screen mode carries it along.
+           Set COPYRIGHT_TEXT to '' in the script to switch it off entirely. */
+        #vcopy { display: none; margin: 0 0 8px; padding: 0;
+                 font: 500 11.5px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+                 letter-spacing: 0.02em; color: #7f8aa8; }
+        #vcopy.show { display: block; }
+
         /* ---- player load failure panel ----
            Sits over the black box when the iframe never comes up, so the student
            gets an explanation and a reload button instead of a silent void. */
@@ -182,6 +195,7 @@
         <div id="playerView" class="hidden">
             <h1 id="videoTitle">Video</h1>
             <p class="who" id="whoLine"></p>
+            <p id="vcopy"></p>
             <div id="videoStage"><div class="videowrap"><div id="ytplayer"></div><div class="vmask vmask-top-left" id="vmaskTopLeft"></div><div class="vmask vmask-top-right" id="vmaskTopRight"></div><div class="vmask vmask-bottom-left" id="vmaskBottomLeft"></div><div class="vmask vmask-bottom-right" id="vmaskBottomRight"></div><div id="loadFail"><p id="loadFailMsg">The video didn't load.</p><p class="why" id="loadFailWhy"></p><button type="button" onclick="location.reload()">Reload the page</button></div></div></div>
             <div class="status">
                 <span>Watched:</span>
@@ -242,6 +256,29 @@
         let lastSave = 0;
         let firstSeen = null;
 
+        // Default notice. A per-video `copyrightNotice` in videoSettings overrides it.
+        // Set this to '' (and leave the setting blank) to turn the overlay off.
+        const COPYRIGHT_TEXT = '\u00A9 2026 Magellica Press';
+
+        // ---- attempt is not "spent" until the video actually plays ----
+        let startedMarked = false;
+
+        // ---- guard against playback resuming on its own (Firefox) ----
+        let userPaused = false;        // student deliberately paused
+        let lastGesture = 0;           // last moment the student touched anything
+        let reArmed = false;           // we already re-paused once since that pause
+        const GESTURE_WINDOW_MS = 2000;
+
+        // A click INSIDE the cross-origin iframe is invisible to us, but it does move
+        // focus: the window blurs and document.activeElement becomes the iframe. That
+        // is our only way to know the student pressed YouTube's own play button.
+        window.addEventListener('blur', function () {
+            const el = document.activeElement;
+            if (el && el.tagName === 'IFRAME') lastGesture = Date.now();
+        });
+        document.addEventListener('pointerdown', function () { lastGesture = Date.now(); }, true);
+        document.addEventListener('keydown',     function () { lastGesture = Date.now(); }, true);
+
         // ============== LOGIN ==============
         async function startSession() {
             const errEl = document.getElementById('loginError');
@@ -281,6 +318,16 @@
                 {
                     const on = settings.maskEnabled !== false;
                     document.querySelector('.card').style.setProperty('--mask-display', on ? 'block' : 'none');
+                }
+
+                // Copyright notice over the player. Per-video setting wins; blank string
+                // anywhere in the chain switches it off.
+                {
+                    const txt = (settings.copyrightNotice !== undefined)
+                                ? String(settings.copyrightNotice) : COPYRIGHT_TEXT;
+                    const el = document.getElementById('vcopy');
+                    el.textContent = txt;
+                    el.classList.toggle('show', !!txt.trim());
                 }
 
                 // Enforce Student ID rule, if any
@@ -338,7 +385,10 @@
 
                 // Docs written before attempt tracking existed have no `attempt` field -> treat as 1.
                 // Review sessions are NOT attempts and must never inflate the attempt number.
-                const priorAttempts = prior.filter(r => r.review !== true);
+                // started === false means the player never actually played a frame, so the
+                // student saw nothing and owes nothing. Docs written before this flag existed
+                // have no `started` field and still count, as they should.
+                const priorAttempts = prior.filter(r => r.review !== true && r.started !== false);
                 const priorReviews  = prior.filter(r => r.review === true);
                 const highest = priorAttempts.reduce((m, r) => Math.max(m, r.attempt || 1), 0);
 
@@ -369,6 +419,7 @@
 
                 // Every attempt starts from nothing.
                 covered = null; watchTime = 0; lastTime = -1; firstSeen = Date.now(); dirty = false; lastSave = 0;
+                startedMarked = false; userPaused = false; reArmed = false; lastGesture = Date.now();
 
                 // Claim the attempt immediately so closing the tab can't win a free retry.
                 try {
@@ -377,7 +428,8 @@
                         studentName: name, studentID,
                         maxAttempts, review: isReview,
                         coverage: '', cellsCovered: 0, percentWatched: 0, watchTime: 0,
-                        completed: false, firstSeen, lastUpdated: firstSeen
+                        completed: false, started: false,
+                        firstSeen, lastUpdated: firstSeen
                     };
                     if (isReview) claim.reviewNum = reviewNum; else claim.attempt = attempt;
                     await db.collection('videoProgress').doc(docId).set(claim);
@@ -511,10 +563,13 @@
                 videoId: videoId,
                 // fs: 0 hides YouTube's own full-screen button (and disables its "f" shortcut),
                 // so the only way to go full screen is ours — which keeps the banner and info bar.
-                // cc_load_policy turns captions on by default. cc_lang_pref is deliberately NOT set —
-                // pinning a language removes Auto-translate from the player's caption menu.
+                // cc_load_policy: 0 starts with captions OFF — the student turns them on with
+                // the player's own CC button, which the top-band notch leaves reachable. This is
+                // a request, not a guarantee: a student whose YouTube account forces captions on
+                // may still see them. cc_lang_pref is deliberately NOT set — pinning a language
+                // removes Auto-translate from the player's caption menu.
                 playerVars: { rel: 0, modestbranding: 1, playsinline: 1, enablejsapi: 1, fs: 0,
-                             cc_load_policy: 1 },
+                             cc_load_policy: 0 },
                 events: { onReady: onPlayerReady, onStateChange: onPlayerStateChange,
                           onError: onPlayerError }
             });
@@ -585,11 +640,52 @@
             setInterval(sample, POLL_MS);
         }
 
+        // Nothing in this file ever calls playVideo(). If playback starts while the
+        // student is paused and hasn't touched anything, it started itself — Firefox
+        // and YouTube's player between them do this, roughly 20s after a pause. We
+        // put it back. Only once per pause: if it fights us a second time we let it
+        // go rather than trap a student who really did press play and whose click we
+        // failed to detect.
         function onPlayerStateChange(e) {
-            // 0 = ended, 2 = paused
-            if (e.data === YT.PlayerState.ENDED || e.data === YT.PlayerState.PAUSED) {
+            if (e.data === YT.PlayerState.PLAYING) {
+                const quiet = Date.now() - lastGesture;
+                if (userPaused && quiet > GESTURE_WINDOW_MS && !reArmed) {
+                    reArmed = true;
+                    console.warn('[video] playback resumed with no user action after ' +
+                                 Math.round(quiet / 1000) + 's — re-pausing');
+                    try { player.pauseVideo(); } catch (err) { /* player gone */ }
+                    return;                       // stays paused; userPaused holds
+                }
+                userPaused = false;
+                reArmed = false;
+                markStarted();                    // this is when the attempt is spent
+                return;
+            }
+            if (e.data === YT.PlayerState.PAUSED) {
+                userPaused = true;
+                saveProgress(true);
+                return;
+            }
+            if (e.data === YT.PlayerState.ENDED) {
+                userPaused = false;
                 saveProgress(true);
             }
+        }
+
+        // The attempt document is written at login (so closing the tab can't win a
+        // free retry) but flagged started:false. It only becomes a real attempt here,
+        // the first time a frame actually plays. A player that loads and never starts
+        // therefore costs the student nothing — the dashboard skips started:false docs
+        // when it counts attempts.
+        function markStarted() {
+            if (startedMarked || !db || !session) return;
+            startedMarked = true;
+            db.collection('videoProgress').doc(session.docId)
+              .set({ started: true, startedAt: Date.now() }, { merge: true })
+              .catch(function (err) {
+                  startedMarked = false;          // let the next PLAYING try again
+                  console.error('[video] could not mark attempt started:', err);
+              });
         }
 
         // ============== Coverage sampling (distinguishes watching from skipping) ==============
@@ -661,6 +757,7 @@
                     percentWatched: percent,
                     watchTime: Math.round(watchTime),
                     completed: percent >= 100,
+                    started: startedMarked,
                     firstSeen: firstSeen || Date.now(),
                     lastUpdated: Date.now()
                 };
